@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <unordered_map>
+#include <algorithm>
 
 using namespace std;
 
@@ -19,6 +20,7 @@ struct KmerInfo {
     string kmer;
     size_t address;
 };
+
 
 // Hash function
 static inline uint64_t hash64(uint64_t key, uint64_t mask) {
@@ -110,6 +112,10 @@ vector<KmerInfo> processEncodedFile(const string& filename) {
     return kmers;
 }
 
+bool compareKmer(const pair<string, size_t>& a, const pair<string, size_t>& b) {
+    return a.first < b.first;
+}
+
 int main() {
     string filename = "plant.bin";
 
@@ -124,6 +130,12 @@ int main() {
         uint16_t binIndex = kmerInfo.hashValue & (NUM_BINS - 1);
         bins[binIndex].emplace_back(kmerInfo.kmer, kmerInfo.address);
     }
+
+    // Sort k-mers within each bin based on the k-mer value (alphabetical order)
+    for (auto& bin : bins) {
+        sort(bin.begin(), bin.end(), compareKmer);
+    }
+
 
     // Output the k-mers in each bin (for demonstration purposes)
     for (size_t i = 0; i < bins.size(); ++i) {
