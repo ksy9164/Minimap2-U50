@@ -26,7 +26,6 @@ typedef 128 Kval;
 typedef 128 Wval;
 //typedef 35 Kval;
 //typedef 40 Wval;
-
 module mkKernelMain(KernelMainIfc);
 	Vector#(MemPortCnt, FIFO#(MemPortReq)) readReqQs <- replicateM(mkFIFO);
 	Vector#(MemPortCnt, FIFO#(MemPortReq)) writeReqQs <- replicateM(mkFIFO);
@@ -40,6 +39,7 @@ module mkKernelMain(KernelMainIfc);
 	ChainingIfc chain <- mkChaining;
 
 	FIFO#(Bit#(512)) resultQ <-mkFIFO;
+	FIFO#(Bit#(32)) startQ <-mkFIFO;
 
 	rule incCycle;
 		cycleCounter <= cycleCounter + 1;
@@ -50,7 +50,18 @@ module mkKernelMain(KernelMainIfc);
 	Reg#(Bit#(64)) writeReqOff <- mkReg(0);
 	Reg#(Bool) kernelDone <- mkReg(False);
 
-	rule sendReadReq (bytesToRead > 0);
+	rule startKernel(!started);
+	    startQ.deq;
+	    Bit#(32) param = startQ.first;
+
+        started <= True;
+        bytesToRead <= param;
+        readReqOff <= 0;
+        writeReqOff <= 0;
+        kernelDone <= False;
+    endrule
+
+	rule sendReadReq (bytesToRead > 0 && started);
 		if ( bytesToRead > 64 ) bytesToRead <= bytesToRead - 64;
 		else bytesToRead <= 0;
 
@@ -59,7 +70,7 @@ module mkKernelMain(KernelMainIfc);
 	endrule
 
     // This is a simple calculation for testing
-	rule addNumber;
+	rule addNumber(started);
 		let d = readWordQs[0].first;
 		readWordQs[0].deq;
 
@@ -71,7 +82,7 @@ module mkKernelMain(KernelMainIfc);
  *         resultQ.enq(d); */
 	endrule
 
-	rule writeResult;
+	rule writeResult(started);
 		/* let d = resultQ.first; */
 	    let d <- chain.deq;
 
@@ -80,7 +91,7 @@ module mkKernelMain(KernelMainIfc);
 		writeWordQs[1].enq(zeroExtend(tpl_1(d)));
 	endrule
 
-	rule checkDone;
+	rule checkDone(started);
 	    if (writeReqOff == readReqOff && started && writeReqOff != 0) begin
 	        kernelDone <= True;
 	    end 	
@@ -110,13 +121,20 @@ module mkKernelMain(KernelMainIfc);
 		endinterface;
 	end
 
-	method Action start(Bit#(32) param);
-		started <= True;
-		bytesToRead <= param;
-		readReqOff <= 0;
-	    writeReqOff <= 0;
-	    kernelDone <= False;
-	endmethod
+	/* method Action start(Bit#(32) param);
+	 *     if (!started) begin
+	 *         started <= True;
+	 *         bytesToRead <= param;
+	 *         readReqOff <= 0;
+	 *         writeReqOff <= 0;
+	 *         kernelDone <= False;
+	 *     end
+	 * endmethod */
+
+    method Action start(Bit#(32) param);
+        startQ.enq(param);
+    endmethod
+
 	method Bool done;
 	    let d = kernelDone;
 	    return d;

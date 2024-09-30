@@ -1,6 +1,5 @@
-package Chaining;
-
 import FIFO::*;
+import FIFOLI::*;
 import Vector::*;
 
 // Define bit sizes using typedef
@@ -31,49 +30,77 @@ module mkChaining(ChainingIfc);
     // Define FIFOs array
     // Create hierarchies of FIFOs: 64 -> 16 -> 4 -> 1
 
-    Vector#(64, Reg#(Bit#(48))) past_x <- replicateM(mkReg(0));
-    Vector#(64, Reg#(Bit#(48))) past_y <- replicateM(mkReg(0));
-    Vector#(64, Reg#(Bit#(48))) past_dp <- replicateM(mkReg(0));
+    Vector#(32, Reg#(Bit#(48))) past_x <- replicateM(mkReg(0));
+    Vector#(32, Reg#(Bit#(48))) past_y <- replicateM(mkReg(0));
+    Vector#(32, Reg#(Bit#(48))) past_dp <- replicateM(mkReg(0));
 
-    Vector#(64, FIFO#(Tuple3#(Bit#(48), Bit#(48), Bit#(32)))) stage3 <- replicateM(mkFIFO);
-    Vector#(16, FIFO#(Tuple3#(Bit#(48), Bit#(48), Bit#(32)))) stage2 <- replicateM(mkFIFO);
+    Vector#(32, FIFO#(Tuple3#(Bit#(48), Bit#(48), Bit#(32)))) stage4 <- replicateM(mkFIFO);
+    Vector#(16, FIFO#(Tuple3#(Bit#(48), Bit#(48), Bit#(32)))) stage3 <- replicateM(mkFIFO);
+    Vector#(8, FIFO#(Tuple3#(Bit#(48), Bit#(48), Bit#(32)))) stage2 <- replicateM(mkFIFO);
     Vector#(4, FIFO#(Tuple3#(Bit#(48), Bit#(48), Bit#(32)))) stage1 <- replicateM(mkFIFO);
+    Vector#(2, FIFOLI#(Tuple3#(Bit#(48), Bit#(48), Bit#(32)), 3)) stage0 <- replicateM(mkFIFOLI);
 
-    Vector#(64, FIFO#(Bit#(48))) res_1Q <- replicateM(mkFIFO);
+    Vector#(32, FIFO#(Bit#(48))) res_1Q <- replicateM(mkFIFO);
     Vector#(16, FIFO#(Tuple2#(Bit#(48), Bit#(8)))) res_2Q <- replicateM(mkFIFO);
-    Vector#(4, FIFO#(Tuple2#(Bit#(48), Bit#(8)))) res_3Q <- replicateM(mkFIFO);
-    FIFO#(Tuple2#(Bit#(48), Bit#(8))) resQ <- mkFIFO;
+    Vector#(8, FIFO#(Tuple2#(Bit#(48), Bit#(8)))) res_3Q <- replicateM(mkFIFO);
+    Vector#(4, FIFO#(Tuple2#(Bit#(48), Bit#(8)))) res_4Q <- replicateM(mkFIFO);
+    Vector#(2, FIFOLI#(Tuple2#(Bit#(48), Bit#(8)), 3)) resQ <- replicateM(mkFIFOLI);
+    /* FIFO#(Tuple2#(Bit#(48), Bit#(8))) resQ <- mkFIFO; */
 
-    // To 4 -> 16
+    // To 2 -> 4
+    for (Bit#(32) i = 0; i < 2; i = i +1) begin
+        rule toStage1;
+            stage0[i].deq;
+            let d = stage0[i].first;
+
+            for (Bit#(32) j = 0; j < 2; j = j + 1) begin
+                stage1[i * 2 + j].enq(d);
+            end
+        endrule
+    end
+
+    // To 4 -> 8
     for (Bit#(32) i = 0; i < 4; i = i +1) begin
         rule toStage2;
             stage1[i].deq;
             let d = stage1[i].first;
 
-            for (Bit#(32) j = 0; j < 4; j = j + 1) begin
-                stage2[i * 4 + j].enq(d);
+            for (Bit#(32) j = 0; j < 2; j = j + 1) begin
+                stage2[i * 2 + j].enq(d);
             end
         endrule
     end
 
-    // To 16 -> 64
-    for (Bit#(32) i = 0; i < 16; i = i + 1) begin
+    // To 8 -> 16
+    for (Bit#(32) i = 0; i < 8; i = i + 1) begin
         rule toStage3;
             stage2[i].deq;
             let d = stage2[i].first;
 
-            for (Bit#(32) j = 0; j < 4; j = j + 1) begin
-                stage3[i * 4 + j].enq(d);
+            for (Bit#(32) j = 0; j < 2; j = j + 1) begin
+                stage3[i * 2 + j].enq(d);
             end
         endrule
     end
 
-    for (Bit#(32) i = 0; i < 64; i = i + 1) begin
-        rule doDynamic;
+    // To 16 -> 32
+    for (Bit#(32) i = 0; i < 16; i = i + 1) begin
+        rule toStage4;
             stage3[i].deq;
-            let x = tpl_1(stage3[i].first);
-            let y = tpl_2(stage3[i].first);
-            let w = tpl_3(stage3[i].first);
+            let d = stage3[i].first;
+
+            for (Bit#(32) j = 0; j < 2; j = j + 1) begin
+                stage4[i * 2 + j].enq(d);
+            end
+        endrule
+    end
+
+    for (Bit#(32) i = 0; i < 32; i = i + 1) begin
+        rule doDynamic;
+            stage4[i].deq;
+            let x = tpl_1(stage4[i].first);
+            let y = tpl_2(stage4[i].first);
+            let w = tpl_3(stage4[i].first);
 
             Bit#(48) a, b, dp;
             if (y - past_y[i] > x - past_x[i]) begin
@@ -97,157 +124,99 @@ module mkChaining(ChainingIfc);
 
     for (Bit#(8) i = 0; i < 16; i = i + 1) begin
         rule relay_result;
-            res_1Q[i * 4].deq;
-            res_1Q[i * 4 + 1].deq;
-            res_1Q[i * 4 + 2].deq;
-            res_1Q[i * 4 + 3].deq;
+            res_1Q[i * 2].deq;
+            res_1Q[i * 2 + 1].deq;
 
-            let a = res_1Q[i * 4].first;
-            let b = res_1Q[i * 4 + 1].first;
-            let c = res_1Q[i * 4 + 2].first;
-            let d = res_1Q[i * 4 + 3].first;
+            let a = res_1Q[i * 2].first;
+            let b = res_1Q[i * 2 + 1].first;
 
             if (a >= b) begin
-                if (c >= d) begin
-                    if (a >= c) begin
-                        res_2Q[i].enq(tuple2(a, i * 4));
-                    end else begin // c >=
-                        res_2Q[i].enq(tuple2(c, i * 4 + 2));
-                    end
-                end else begin
-                    if (a >= d) begin
-                        res_2Q[i].enq(tuple2(a, i * 4));
-                    end else begin
-                        res_2Q[i].enq(tuple2(d, i * 4 + 3));
-                    end
-                end
+                res_2Q[i].enq(tuple2(a, i * 2));
             end else begin
-                if (c >= d) begin
-                    if (b >= c) begin
-                        res_2Q[i].enq(tuple2(b, i * 4 + 1));
-                    end else begin // c >=
-                        res_2Q[i].enq(tuple2(c, i * 4 + 2));
-                    end
-                end else begin
-                    if (b >= d) begin
-                        res_2Q[i].enq(tuple2(b, i * 4 + 1));
-                    end else begin
-                        res_2Q[i].enq(tuple2(d, i * 4 + 3));
-                    end
-                end
+                res_2Q[i].enq(tuple2(b, i * 2 + 1));
+            end
+        endrule
+    end
+
+    for (Bit#(8) i = 0; i < 8; i = i + 1) begin
+        rule res_relay2;
+            res_2Q[i * 2].deq;
+            res_2Q[i * 2 + 1].deq;
+
+            let a = tpl_1(res_2Q[i * 2].first);
+            let b = tpl_1(res_2Q[i * 2 + 1].first);
+
+            let idx_a = tpl_2(res_2Q[i * 2].first);
+            let idx_b = tpl_2(res_2Q[i * 2 + 1].first);
+
+            if (a >= b) begin
+                res_3Q[i].enq(tuple2(a, idx_a));
+            end else begin
+                res_3Q[i].enq(tuple2(b, idx_a));
             end
         endrule
     end
 
     for (Bit#(8) i = 0; i < 4; i = i + 1) begin
-        rule res_relay2;
-            res_2Q[i * 4].deq;
-            res_2Q[i * 4 + 1].deq;
-            res_2Q[i * 4 + 2].deq;
-            res_2Q[i * 4 + 3].deq;
+        rule res_relay3;
+            res_3Q[i * 2].deq;
+            res_3Q[i * 2 + 1].deq;
 
-            let a = tpl_1(res_2Q[i * 4].first);
-            let b = tpl_1(res_2Q[i * 4 + 1].first);
-            let c = tpl_1(res_2Q[i * 4 + 2].first);
-            let d = tpl_1(res_2Q[i * 4 + 3].first);
+            let a = tpl_1(res_3Q[i * 2].first);
+            let b = tpl_1(res_3Q[i * 2 + 1].first);
 
-            let idx_a = tpl_2(res_2Q[i * 4].first);
-            let idx_b = tpl_2(res_2Q[i * 4 + 1].first);
-            let idx_c = tpl_2(res_2Q[i * 4 + 2].first);
-            let idx_d = tpl_2(res_2Q[i * 4 + 3].first);
+            let idx_a = tpl_2(res_3Q[i * 2].first);
+            let idx_b = tpl_2(res_3Q[i * 2 + 1].first);
 
             if (a >= b) begin
-                if (c >= d) begin
-                    if (a >= c) begin
-                        res_3Q[i].enq(tuple2(a, idx_a));
-                    end else begin // c >=
-                        res_3Q[i].enq(tuple2(c, idx_c));
-                    end
-                end else begin
-                    if (a >= d) begin
-                        res_3Q[i].enq(tuple2(a, idx_a));
-                    end else begin
-                        res_3Q[i].enq(tuple2(d, idx_d));
-                    end
-                end
+                res_4Q[i].enq(tuple2(a, idx_a));
             end else begin
-                if (c >= d) begin
-                    if (b >= c) begin
-                        res_3Q[i].enq(tuple2(b, idx_a));
-                    end else begin // c >=
-                        res_3Q[i].enq(tuple2(c, idx_c));
-                    end
-                end else begin
-                    if (b >= d) begin
-                        res_3Q[i].enq(tuple2(b, idx_b));
-                    end else begin
-                        res_3Q[i].enq(tuple2(d, idx_d));
-                    end
-                end
+                res_4Q[i].enq(tuple2(b, idx_a));
             end
         endrule
     end
 
     // we can only send idx
-    rule res_relay3;
-        res_3Q[0].deq;
-        res_3Q[1].deq;
-        res_3Q[2].deq;
-        res_3Q[3].deq;
+    for (Bit#(8) i = 0; i < 2; i = i + 1) begin
+        rule res_relay4;
+            res_4Q[i * 2].deq;
+            res_4Q[i * 2 + 1].deq;
 
-        let a = tpl_1(res_3Q[0].first);
-        let b = tpl_1(res_3Q[0 + 1].first);
-        let c = tpl_1(res_3Q[0 + 2].first);
-        let d = tpl_1(res_3Q[0 + 3].first);
+            let a = tpl_1(res_4Q[i * 2].first);
+            let b = tpl_1(res_4Q[i * 2 + 1].first);
 
-        let idx_a = tpl_2(res_3Q[0].first);
-        let idx_b = tpl_2(res_3Q[0 + 1].first);
-        let idx_c = tpl_2(res_3Q[0 + 2].first);
-        let idx_d = tpl_2(res_3Q[0 + 3].first);
+            let idx_a = tpl_2(res_4Q[i * 2].first);
+            let idx_b = tpl_2(res_4Q[i * 2 + 1].first);
 
-        if (a >= b) begin
-            if (c >= d) begin
-                if (a >= c) begin
-                    resQ.enq(tuple2(a, idx_a));
-                end else begin // c >=
-                    resQ.enq(tuple2(c, idx_c));
-                end
+            if (a >= b) begin
+                resQ[i].enq(tuple2(a, idx_a));
             end else begin
-                if (a >= d) begin
-                    resQ.enq(tuple2(a, idx_a));
-                end else begin
-                    resQ.enq(tuple2(d, idx_d));
-                end
+                resQ[i].enq(tuple2(b, idx_a));
             end
-        end else begin
-            if (c >= d) begin
-                if (b >= c) begin
-                    resQ.enq(tuple2(b, idx_a));
-                end else begin // c >=
-                    resQ.enq(tuple2(c, idx_c));
-                end
-            end else begin
-                if (b >= d) begin
-                    resQ.enq(tuple2(b, idx_b));
-                end else begin
-                    resQ.enq(tuple2(d, idx_d));
-                end
-            end
-        end
-    endrule
+        endrule
+    end
     // Enqueue d to the first 4 FIFOs
     method Action enq(Tuple3#(Bit#(48), Bit#(48), Bit#(32)) d);
-            for (Bit#(32) j = 0; j < 4; j = j + 1) begin
-                stage1[j].enq(d);
-            end
+        stage0[0].enq(d);
+        stage0[1].enq(d);
     endmethod
 
     // Dequeue the final output from the last FIFO
     method ActionValue#(Tuple2#(Bit#(48), Bit#(8))) deq;
-        let result = resQ.deq();
-        return resQ.first; // returning the third value of the tuple
+            resQ[0].deq;
+            resQ[1].deq;
+
+            let a = tpl_1(resQ[0].first);
+            let b = tpl_1(resQ[1].first);
+
+            let idx_a = tpl_2(resQ[0].first);
+            let idx_b = tpl_2(resQ[1].first);
+
+            if (a >= b) begin
+                return resQ[0].first;
+            end else begin
+                return resQ[1].first;
+            end
     endmethod
 
 endmodule
-endpackage
-

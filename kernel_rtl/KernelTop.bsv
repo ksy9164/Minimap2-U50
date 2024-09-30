@@ -32,9 +32,9 @@ module kernel (KernelTopIfc);
 	Reg#(Bit#(32)) prevVal <- mkReg(0);
 
 	Reg#(Bit#(32)) cycleCounter <- mkReg(0);
-	rule incCycle(started);
-		cycleCounter <= cycleCounter + 1;
-	endrule
+	/* rule incCycle(started && !kernelDone);
+     *     cycleCounter <= cycleCounter + 1;
+	 * endrule */
 
 
 	KernelMainIfc kernelMain <- mkKernelMain;
@@ -44,7 +44,7 @@ module kernel (KernelTopIfc);
 		if ( axi4control.ap_start ) begin
 		    Bit#(32) d = axi4control.scalar00;
 		    if (d != prevVal) begin
-			    kernelMain.start(d);
+                kernelMain.start(d);
 			    prevVal <= d;
 			    kernelDone <= False;
 			    started <= True;
@@ -53,7 +53,7 @@ module kernel (KernelTopIfc);
 		end
 	endrule
 
-	rule checkDone (started && cycleCounter > 4096);
+	rule checkDone (started && cycleCounter > 4096 && !kernelDone);
 		Bool done = kernelMain.done;
 		if (done) begin
 		    axi4control.ap_done();
@@ -61,21 +61,21 @@ module kernel (KernelTopIfc);
 		end
 	endrule
 	for ( Integer i = 0; i < valueOf(MemPortCnt); i=i+1 ) begin
-		rule relayReadReq00 ( started);
+		rule relayReadReq00 (started && !kernelDone);
 			let r <- kernelMain.mem[i].readReq;
 			if ( i == 0 ) axi4mem[i].readReq(axi4control.mem_addr+r.addr,zeroExtend(r.bytes));
 			else axi4mem[i].readReq(axi4control.file_addr+r.addr,zeroExtend(r.bytes));
 		endrule
-		rule relayWriteReq ( started);
+		rule relayWriteReq (started && !kernelDone);
 			let r <- kernelMain.mem[i].writeReq;
 			if ( i == 0 ) axi4mem[i].writeReq(axi4control.mem_addr+r.addr,zeroExtend(r.bytes));
 			else axi4mem[i].writeReq(axi4control.file_addr+r.addr,zeroExtend(r.bytes));
 		endrule
-		rule relayWriteWord ( started);
+		rule relayWriteWord (started && !kernelDone);
 			let r <- kernelMain.mem[i].writeWord;
 			axi4mem[i].write(r);
 		endrule
-		rule relayReadWord ( started);
+		rule relayReadWord (started && !kernelDone);
 			let d <- axi4mem[i].read;
 			kernelMain.mem[i].readWord(d);
 		endrule
