@@ -1,6 +1,9 @@
 import FIFO::*;
+import FIFOLI::*;
 import Vector::*;
 import Chaining::*;
+import Alignment::*;
+import Serializer::*;
 
 typedef 2 MemPortCnt;
 
@@ -26,6 +29,7 @@ typedef 128 Kval;
 typedef 128 Wval;
 //typedef 35 Kval;
 //typedef 40 Wval;
+
 module mkKernelMain(KernelMainIfc);
 	Vector#(MemPortCnt, FIFO#(MemPortReq)) readReqQs <- replicateM(mkFIFO);
 	Vector#(MemPortCnt, FIFO#(MemPortReq)) writeReqQs <- replicateM(mkFIFO);
@@ -36,10 +40,7 @@ module mkKernelMain(KernelMainIfc);
 	Reg#(Bool) started <- mkReg(False);
 	Reg#(Bit#(32)) bytesToRead <- mkReg(0);
 
-	ChainingIfc chain <- mkChaining;
-
 	FIFO#(Bit#(512)) resultQ <-mkFIFO;
-	FIFO#(Bit#(32)) startQ <-mkFIFO;
 
 	rule incCycle;
 		cycleCounter <= cycleCounter + 1;
@@ -48,20 +49,8 @@ module mkKernelMain(KernelMainIfc);
 	//////////////////////////////////////////////////////////////////////////
 	Reg#(Bit#(64)) readReqOff <- mkReg(0);
 	Reg#(Bit#(64)) writeReqOff <- mkReg(0);
-	Reg#(Bool) kernelDone <- mkReg(False);
 
-	rule startKernel(!started);
-	    startQ.deq;
-	    Bit#(32) param = startQ.first;
-
-        started <= True;
-        bytesToRead <= param;
-        readReqOff <= 0;
-        writeReqOff <= 0;
-        kernelDone <= False;
-    endrule
-
-	rule sendReadReq (bytesToRead > 0 && started);
+	rule sendReadReq (bytesToRead > 0);
 		if ( bytesToRead > 64 ) bytesToRead <= bytesToRead - 64;
 		else bytesToRead <= 0;
 
@@ -69,37 +58,38 @@ module mkKernelMain(KernelMainIfc);
 		readReqOff <= readReqOff+ 64;
 	endrule
 
-    // This is a simple calculation for testing
+    SerializerIfc#(512, 256) inputSerial <- mkSerializer;
+	SWG_IFC align <- mkSWG;
+	Reg#(Bit#(16)) cnt_g <- mkReg(0);
+
 	rule addNumber(started);
 		let d = readWordQs[0].first;
 		readWordQs[0].deq;
 
-		chain.enq(tuple3(d[256:256-47], d[64:64-47], d[312:312-31]));
+		if (cnt_g == 0) begin
+		    align.set_pe(truncate(d));
+		end else begin
+		    inputSerial.put(d);
+		end
+		cnt_g <= cnt_g + 1;
+	endrule
 
-/*         d[63:32] = bytesToRead;
- *         d = d + 7;
- *
- *         resultQ.enq(d); */
+	rule putGenomes;
+	    Bit#(2) in <- inputSerial.get;
+	    align.put(in);
 	endrule
 
 	rule writeResult(started);
-		/* let d = resultQ.first; */
-	    let d <- chain.deq;
-
+	    let d <- align.getOutput;
 		writeReqQs[1].enq(MemPortReq{addr:writeReqOff, bytes:64});
 		writeReqOff <= writeReqOff + 64;
-		writeWordQs[1].enq(zeroExtend(tpl_1(d)));
-	endrule
-
-	rule checkDone(started);
-	    if (writeReqOff == readReqOff && started && writeReqOff != 0) begin
-	        kernelDone <= True;
-	    end 	
+		writeWordQs[1].enq(zeroExtend(d));
 	endrule
 
 	//////////////////////////////////////////////////////////////////////////
 
-	
+	Reg#(Bool) kernelDone <- mkReg(False);
+
 	Vector#(MemPortCnt, MemPortIfc) mem_;
 	for (Integer i = 0; i < valueOf(MemPortCnt); i=i+1) begin
 		mem_[i] = interface MemPortIfc;
@@ -121,23 +111,17 @@ module mkKernelMain(KernelMainIfc);
 		endinterface;
 	end
 
-	/* method Action start(Bit#(32) param);
-	 *     if (!started) begin
-	 *         started <= True;
-	 *         bytesToRead <= param;
-	 *         readReqOff <= 0;
-	 *         writeReqOff <= 0;
-	 *         kernelDone <= False;
-	 *     end
-	 * endmethod */
-
-    method Action start(Bit#(32) param);
-        startQ.enq(param);
-    endmethod
+	method Action start(Bit#(32) param);
+		started <= True;
+		bytesToRead <= param;
+	endmethod
 
 	method Bool done;
-	    let d = kernelDone;
-	    return d;
+	    if (writeReqOff != 0 && readReqOff == writeReqOff) begin
+	        return True;
+	    end else begin
+	        return False;
+	    end
 	endmethod
 	interface mem = mem_;
 endmodule
